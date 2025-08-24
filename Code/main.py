@@ -8,16 +8,21 @@ from dataset import dataloader as dl
 
 if __name__ == "__main__":
     LEARNING_RATE = 3e-4
-    BATCH_SIZE = 32
+    BATCH_SIZE = 8 #kann auf 16 erhoeht werden, wenn genug VRAM vorhanden ist
     EPOCHS = 2
-    DATA_PATH = "../Samples"
+    DATA_PATH = "Samples"
     MODEL_SAVE_PATH = "../Models/unet_model_01.pth"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     train_dataset = dl(DATA_PATH)
 
     generator = torch.Generator().manual_seed(42)
-    train_dataset, val_dataset = random_split(train_dataset, [0.8, 0.2], generator=generator)
+    total_len = len(train_dataset)
+    train_len = int(0.8 * total_len)
+    val_len = total_len - train_len
+
+    train_dataset, val_dataset = random_split(train_dataset, [train_len, val_len], generator=generator)
+
 
     train_dataloader = DataLoader(dataset=train_dataset,
                                 batch_size=BATCH_SIZE,
@@ -26,7 +31,11 @@ if __name__ == "__main__":
                                 batch_size=BATCH_SIZE,
                                 shuffle=True)
 
-    model = UNet(in_channels=3, num_classes=1).to(device)
+    print(f"Train samples: {len(train_dataset)}")
+    print(f"Validation samples: {len(val_dataset)}")
+
+
+    model = UNet(in_channels=5, num_classes=1).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.BCEWithLogitsLoss()
 

@@ -8,15 +8,16 @@ class dataloader(Dataset):
     def __init__(self, root_path, test=False):
         self.root_path = root_path
         if test:
-            self.images = sorted([root_path+"/manual_test/"+i for i in os.listdir(root_path+"/manual_test/")])
-            self.masks = sorted([root_path+"/manual_test_masks/"+i for i in os.listdir(root_path+"/manual_test_masks/")])
+            self.images = sorted([os.path.join(root_path, "manual_test", i) for i in os.listdir(os.path.join(root_path, "manual_test"))])
+            self.masks = sorted([os.path.join(root_path, "manual_test_masks", i) for i in os.listdir(os.path.join(root_path, "manual_test_masks"))])
         else:
-            self.images = sorted([root_path+"/train/"+i for i in os.listdir(root_path+"/train/")])
-            self.masks = sorted([root_path+"/train_masks/"+i for i in os.listdir(root_path+"/train_masks/")])
-        
+            self.images = sorted([os.path.join(root_path, "Pictures", i) for i in os.listdir(os.path.join(root_path, "Pictures")) if i.lower().endswith(".jpg")])
+            self.masks = sorted([os.path.join(root_path, "Masks", i) for i in os.listdir(os.path.join(root_path, "Masks")) if i.lower().endswith(".png")])
         self.transform = transforms.Compose([
             transforms.Resize((512, 512)),
             transforms.ToTensor()])
+        print(f"Gefundene Bilder: {len(self.images)}")
+        print(f"Gefundene Masken: {len(self.masks)}")
 
     def __getitem__(self, index):
         img_path = self.images[index]
@@ -27,8 +28,8 @@ class dataloader(Dataset):
         mask = self.transform(mask)
 
         h, w = img.shape[1], img.shape[2]
-        if "manual_test" or "train" in img_path:
-            txt_path = img_path.replace(".jpeg", "_1.txt")
+        if "manual_test" or "Pictures" in img_path:
+            txt_path = img_path.replace(".jpg", "_1.txt")
 
             with open(txt_path, 'r') as f:
                 lines = f.readlines()
