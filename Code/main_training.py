@@ -6,12 +6,13 @@ from tqdm import tqdm
 from unet import UNet
 from dataset import dataloader as dl
 
+
 if __name__ == "__main__":
     LEARNING_RATE = 3e-4
     BATCH_SIZE = 8 #kann auf 32 erhoeht werden, wenn genug VRAM vorhanden ist
-    EPOCHS = 4
+    EPOCHS = 3
     DATA_PATH = "Samples"
-    MODEL_SAVE_PATH = "Models/unet_model_01.pth"
+    MODEL_SAVE_PATH = "Models/unet_model_03.pth"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     train_dataset = dl(DATA_PATH)
@@ -35,7 +36,7 @@ if __name__ == "__main__":
     print(f"Validation samples: {len(val_dataset)}")
     print(f"Using device: {device}")
 
-    model = UNet(in_channels=5, num_classes=1).to(device)
+    model = UNet(in_channels=4, num_classes=1).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.BCEWithLogitsLoss()
 
