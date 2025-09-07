@@ -12,7 +12,7 @@ if __name__ == "__main__":
     BATCH_SIZE = 8 #kann auf 32 erhoeht werden, wenn genug VRAM vorhanden ist
     EPOCHS = 3
     DATA_PATH = "Samples"
-    MODEL_SAVE_PATH = "Models/unet_model_03.pth"
+    MODEL_SAVE_PATH = "C:/data/python/CineTrack_Extras/Models/unet_model_04.pth"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     train_dataset = dl(DATA_PATH)
