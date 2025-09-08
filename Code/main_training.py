@@ -9,8 +9,8 @@ from dataset import dataloader as dl
 
 if __name__ == "__main__":
     LEARNING_RATE = 3e-4
-    BATCH_SIZE = 8 #kann auf 32 erhoeht werden, wenn genug VRAM vorhanden ist
-    EPOCHS = 3
+    BATCH_SIZE = 8
+    EPOCHS = 10
     DATA_PATH = "Samples"
     MODEL_SAVE_PATH = "C:/data/python/CineTrack_Extras/Models/unet_model_04.pth"
 
