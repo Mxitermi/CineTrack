@@ -29,7 +29,6 @@ def single_image_inference(img_index, DATA_PATH, model_pth, device):
 
     pred_mask = torch.sigmoid(pred_mask)  # Wahrscheinlichkeiten
     pred_mask = (pred_mask > 0.3).float()  # Binarisierung
-    print(pred_mask)
 
     # RGB-Bild (Kanäle 0, 1, 2)
     rgb_img = input_tensor[:3].permute(1, 2, 0)  # (H, W, 3)
