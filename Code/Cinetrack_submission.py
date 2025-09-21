@@ -45,16 +45,14 @@ MODEL_PATH = "C:/data/python/CineTrack_Extras/Models/unet_model_03.pth"
 '''
 
 
-
 import cv2
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 from torchvision import transforms
+import torch.nn as nn
 
-
+# === Globale Variablen ===
 click_point = None
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_PATH = "C:/data/python/CineTrack_Extras/Models/unet_model_03.pth"
 
@@ -62,266 +60,38 @@ CROP_WIDTH = 400
 CROP_HEIGHT = 400
 
 
-# Model laden (einmalig)
-model = UNet(in_channels=4, num_classes=1).to(device)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-model.eval()
-print("Modell geladen.")
+# === Hilfsfunktionen ===
+def create_gaussian_heatmap(h, w, x, y, sigma=10):
+    heatmap = np.zeros((h, w), dtype=np.float32)
+    if 0 <= x < w and 0 <= y < h:
+        heatmap[int(y), int(x)] = 1
+        heatmap = cv2.GaussianBlur(heatmap, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        heatmap /= heatmap.max()
+    return torch.from_numpy(heatmap).unsqueeze(0)  # (1, H, W)
+
+
 def crop_around_center(frame, center, width, height):
-    """
-    Schneidet ein Rechteck der Größe (width, height) um das gegebene Zentrum aus dem Bild aus.
-    Achtet darauf, dass die Grenzen nicht überschritten werden.
-    """
     h, w = frame.shape[:2]
     cx, cy = center
-
     x1 = max(cx - width // 2, 0)
     y1 = max(cy - height // 2, 0)
     x2 = min(x1 + width, w)
     y2 = min(y1 + height, h)
-
-    # Anpassung, falls wir am Rand schneiden
     x1 = max(x2 - width, 0)
     y1 = max(y2 - height, 0)
-
     return frame[y1:y2, x1:x2]
 
 
 def create_input_tensor(frame, x, y):
-    """
-    Wandelt das OpenCV-Bild (BGR) und Klick-Koordinaten in den Input-Tensor (C=4) für das Model um.
-    """
-    # BGR -> RGB
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    # Bild -> Tensor (C,H,W), float 0..1
     img_tensor = transforms.ToTensor()(frame_rgb)
-
     h, w = frame.shape[:2]
-
-    # Heatmap (1,H,W)
-    heatmap = cgh(h, w, x, y, sigma=5).float()
-
-    # Kombiniere Kanäle: 3 RGB + 1 Heatmap
+    heatmap = create_gaussian_heatmap(h, w, x, y, sigma=5).float()
     input_tensor = torch.cat((img_tensor, heatmap), dim=0)
     return input_tensor
 
-def overlay_prediction(frame, input_tensor, pred_mask):
-    pred_mask = torch.sigmoid(pred_mask).cpu().numpy()
-
-    if pred_mask.ndim == 3:
-        pred_mask = pred_mask.squeeze(0)
-
-    pred_mask_bin = (pred_mask > 0.3).astype(np.uint8) * 255
-
-    mask_color = np.zeros_like(frame)
-    mask_color[:, :, 1] = pred_mask_bin  # Grün
-
-    overlay = cv2.addWeighted(frame, 0.7, mask_color, 0.3, 0)
-
-    center, bbox = find_mask_center(pred_mask, frame, threshold=0.3)
-
-    if center:
-        print(f"Mittelpunkt der Maske: {center}")
-        cropped = crop_around_center(overlay, center, CROP_WIDTH, CROP_HEIGHT)
-        cv2.imshow("Kamera", cropped)
-    else:
-        cv2.imshow("Kamera", overlay)
-
-
-def mouse_callback(event, x, y, flags, param):
-    global click_point
-    if event == cv2.EVENT_LBUTTONDOWN:
-        click_point = (x, y)
-        print(f"Klick bei {click_point}")
-
-def main():
-    global click_point
-
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-    cv2.namedWindow("Kamera")
-    cv2.setMouseCallback("Kamera", mouse_callback)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        if click_point is not None:
-            # Input-Tensor für den Klickpunkt erstellen
-            input_tensor = create_input_tensor(frame, click_point[0], click_point[1]).unsqueeze(0).to(device)
-
-            with torch.no_grad():
-                pred_mask = model(input_tensor)
-
-            # Overlay mit Maske anzeigen
-            overlay_prediction(frame, input_tensor.squeeze(0), pred_mask.squeeze(0))
-        else:
-            # Kein Klick, nur normales Bild zeigen
-            cv2.imshow("Kamera", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    main()
-
-    import os
-import torch
-from PIL import Image
-from torch.utils.data.dataset import Dataset
-from torchvision import transforms
-from PIL import ImageOps
-import numpy as np
-import cv2
-
-def create_gaussian_heatmap(h, w, x, y, sigma=10):
-    """Erzeugt eine 2D-Gaussian-Heatmap mit Peak bei (x, y)."""
-    heatmap = np.zeros((h, w), dtype=np.float32)
-    if 0 <= x < w and 0 <= y < h:
-        heatmap[int(y), int(x)] = 1
-        heatmap = cv2.GaussianBlur(heatmap, (0, 0), sigmaX=sigma, sigmaY=sigma)
-        heatmap /= heatmap.max()  # normalize to [0,1]
-    return torch.from_numpy(heatmap).unsqueeze(0)  # (1, H, W)
-
-
-class dataloader(Dataset):
-    def __init__(self, root_path, test=False):
-        self.root_path = root_path
-        if test:
-            self.images = sorted([os.path.join(root_path, "manual_test", i) for i in os.listdir(os.path.join(root_path, "manual_test"))], key=lambda x: int(os.path.basename(x)[0]))
-            self.masks = sorted([os.path.join(root_path, "manual_test_masks", i) for i in os.listdir(os.path.join(root_path, "manual_test_masks"))], key=lambda x: int(os.path.basename(x)[0]))
-        else:
-            self.images = sorted([os.path.join(root_path, "Pictures", i) for i in os.listdir(os.path.join(root_path, "Pictures")) if i.lower().endswith(".jpg")], key=lambda x: int(os.path.basename(x)[0]))
-            self.masks = sorted([os.path.join(root_path, "Masks", i) for i in os.listdir(os.path.join(root_path, "Masks")) if i.lower().endswith(".png")], key=lambda x: int(os.path.basename(x)[0]))
-        self.transform = transforms.Compose([
-            transforms.Resize((512, 512)),
-            transforms.ToTensor()])
-
-
-    def __getitem__(self, index):
-        img_path = self.images[index]
-        img = Image.open(img_path)
-        #img = ImageOps.exif_transpose(img).convert("RGB") weder masken noch bilder duerfen rotiert werden
-        mask = Image.open(self.masks[index]).convert("L")
-
-        img = self.transform(img) 
-        mask = self.transform(mask)
-
-        h, w = img.shape[1], img.shape[2]
-        if "manual_test" or "Pictures" in img_path:
-            txt_path = img_path.replace(".jpg", "_1.txt")
-
-            with open(txt_path, 'r') as f:
-                lines = f.readlines()
-                val1 = float(lines[0].strip())
-                val2 = float(lines[1].strip()) 
-            
-            orig_w, orig_h = Image.open(img_path).size
-            scale_x = w / orig_w
-            scale_y = h / orig_h
-
-            x_rescaled = val1 * scale_x
-            y_rescaled = val2 * scale_y
-
-            # Heatmap erzeugen
-            heatmap = create_gaussian_heatmap(h, w, x_rescaled, y_rescaled, sigma=5)
-
-            img = torch.cat((img, heatmap), dim=0)
-        return img, mask
-    def __len__(self):
-        return len(self.images)
-
-import os
-import torch
-from PIL import Image
-from torch.utils.data.dataset import Dataset
-from torchvision import transforms
-from PIL import ImageOps
-import numpy as np
-import cv2
-
-def create_gaussian_heatmap(h, w, x, y, sigma=10):
-    """Erzeugt eine 2D-Gaussian-Heatmap mit Peak bei (x, y)."""
-    heatmap = np.zeros((h, w), dtype=np.float32)
-    if 0 <= x < w and 0 <= y < h:
-        heatmap[int(y), int(x)] = 1
-        heatmap = cv2.GaussianBlur(heatmap, (0, 0), sigmaX=sigma, sigmaY=sigma)
-        heatmap /= heatmap.max()  # normalize to [0,1]
-    return torch.from_numpy(heatmap).unsqueeze(0)  # (1, H, W)
-
-
-class dataloader(Dataset):
-    def __init__(self, root_path, test=False):
-        self.root_path = root_path
-        if test:
-            self.images = sorted([os.path.join(root_path, "manual_test", i) for i in os.listdir(os.path.join(root_path, "manual_test"))], key=lambda x: int(os.path.basename(x)[0]))
-            self.masks = sorted([os.path.join(root_path, "manual_test_masks", i) for i in os.listdir(os.path.join(root_path, "manual_test_masks"))], key=lambda x: int(os.path.basename(x)[0]))
-        else:
-            self.images = sorted([os.path.join(root_path, "Pictures", i) for i in os.listdir(os.path.join(root_path, "Pictures")) if i.lower().endswith(".jpg")], key=lambda x: int(os.path.basename(x)[0]))
-            self.masks = sorted([os.path.join(root_path, "Masks", i) for i in os.listdir(os.path.join(root_path, "Masks")) if i.lower().endswith(".png")], key=lambda x: int(os.path.basename(x)[0]))
-        self.transform = transforms.Compose([
-            transforms.Resize((512, 512)),
-            transforms.ToTensor()])
-
-
-    def __getitem__(self, index):
-        img_path = self.images[index]
-        img = Image.open(img_path)
-        #img = ImageOps.exif_transpose(img).convert("RGB") weder masken noch bilder duerfen rotiert werden
-        mask = Image.open(self.masks[index]).convert("L")
-
-        img = self.transform(img) 
-        mask = self.transform(mask)
-
-        h, w = img.shape[1], img.shape[2]
-        if "manual_test" or "Pictures" in img_path:
-            txt_path = img_path.replace(".jpg", "_1.txt")
-
-            with open(txt_path, 'r') as f:
-                lines = f.readlines()
-                val1 = float(lines[0].strip())
-                val2 = float(lines[1].strip()) 
-            
-            orig_w, orig_h = Image.open(img_path).size
-            scale_x = w / orig_w
-            scale_y = h / orig_h
-
-            x_rescaled = val1 * scale_x
-            y_rescaled = val2 * scale_y
-
-            # Heatmap erzeugen
-            heatmap = create_gaussian_heatmap(h, w, x_rescaled, y_rescaled, sigma=5)
-
-            img = torch.cat((img, heatmap), dim=0)
-        return img, mask
-    def __len__(self):
-        return len(self.images)
-
-import cv2
-import numpy as np
 
 def find_mask_center(pred_mask, frame=None, threshold=0.3):
-    """
-    Findet die Mitte der größten Maske in pred_mask (numpy array, Werte 0..1).
-    Optional: Zeichnet Rechteck und Mittelpunkt in das frame (OpenCV Bild).
-
-    Args:
-        pred_mask (np.ndarray): predicted Maske als float numpy array (H,W), Werte 0..1
-        frame (np.ndarray): optional, BGR Bild, um Zeichnungen vorzunehmen
-        threshold (float): Schwellenwert für Binarisierung
-        draw (bool): ob Rechteck und Punkt gezeichnet werden sollen
-
-    Returns:
-        center (tuple or None): Mittelpunkt (x,y) oder None, wenn keine Maske gefunden
-        bbox (tuple or None): bounding box (x,y,w,h) oder None
-    """
     pred_mask_bin = (pred_mask > threshold).astype(np.uint8) * 255
     contours, _ = cv2.findContours(pred_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -333,48 +103,35 @@ def find_mask_center(pred_mask, frame=None, threshold=0.3):
     center = (x + w // 2, y + h // 2)
     return center, (x, y, w, h)
 
-import torch
-import torch.nn as nn
 
-from unet_parts import DoubleConv, DownSample, UpSample
+def overlay_prediction(frame, input_tensor, pred_mask):
+    pred_mask = torch.sigmoid(pred_mask).cpu().numpy()
+    if pred_mask.ndim == 3:
+        pred_mask = pred_mask.squeeze(0)
+
+    pred_mask_bin = (pred_mask > 0.3).astype(np.uint8) * 255
+    mask_color = np.zeros_like(frame)
+    mask_color[:, :, 1] = pred_mask_bin  # Grün
+    overlay = cv2.addWeighted(frame, 0.7, mask_color, 0.3, 0)
+
+    center, _ = find_mask_center(pred_mask, frame, threshold=0.3)
+
+    if center:
+        print(f"[INFO] Mittelpunkt der Maske: {center}")
+        cropped = crop_around_center(overlay, center, CROP_WIDTH, CROP_HEIGHT)
+        cv2.imshow("Kamera", cropped)
+    else:
+        cv2.imshow("Kamera", overlay)
 
 
-class UNet(nn.Module):
-    def __init__(self, in_channels, num_classes):
-        super().__init__()
-        self.down_convolution_1 = DownSample(in_channels, 64)
-        self.down_convolution_2 = DownSample(64, 128)
-        self.down_convolution_3 = DownSample(128, 256)
-        self.down_convolution_4 = DownSample(256, 512)
+def mouse_callback(event, x, y, flags, param):
+    global click_point
+    if event == cv2.EVENT_LBUTTONDOWN:
+        click_point = (x, y)
+        print(f"[INFO] Klick bei {click_point}")
 
-        self.bottle_neck = DoubleConv(512, 1024)
 
-        self.up_convolution_1 = UpSample(1024, 512)
-        self.up_convolution_2 = UpSample(512, 256)
-        self.up_convolution_3 = UpSample(256, 128)
-        self.up_convolution_4 = UpSample(128, 64)
-        
-        self.out = nn.Conv2d(in_channels=64, out_channels=num_classes, kernel_size=1)
-
-    def forward(self, x):
-       down_1, p1 = self.down_convolution_1(x)
-       down_2, p2 = self.down_convolution_2(p1)
-       down_3, p3 = self.down_convolution_3(p2)
-       down_4, p4 = self.down_convolution_4(p3)
-
-       b = self.bottle_neck(p4)
-
-       up_1 = self.up_convolution_1(b, down_4)
-       up_2 = self.up_convolution_2(up_1, down_3)
-       up_3 = self.up_convolution_3(up_2, down_2)
-       up_4 = self.up_convolution_4(up_3, down_1)
-
-       out = self.out(up_4)
-       return out
-
-import torch
-import torch.nn as nn
-
+# === UNet Architektur ===
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -398,17 +155,90 @@ class DownSample(nn.Module):
     def forward(self, x):
         down = self.conv(x)
         p = self.pool(down)
-
         return down, p
 
 
 class UpSample(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
+        self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
         self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
-       x1 = self.up(x1)
-       x = torch.cat([x1, x2], 1)
-       return self.conv(x)
+        x1 = self.up(x1)
+        x = torch.cat([x1, x2], dim=1)
+        return self.conv(x)
+
+
+class UNet(nn.Module):
+    def __init__(self, in_channels, num_classes):
+        super().__init__()
+        self.down1 = DownSample(in_channels, 64)
+        self.down2 = DownSample(64, 128)
+        self.down3 = DownSample(128, 256)
+        self.down4 = DownSample(256, 512)
+
+        self.bottleneck = DoubleConv(512, 1024)
+
+        self.up1 = UpSample(1024, 512)
+        self.up2 = UpSample(512, 256)
+        self.up3 = UpSample(256, 128)
+        self.up4 = UpSample(128, 64)
+
+        self.out = nn.Conv2d(64, num_classes, kernel_size=1)
+
+    def forward(self, x):
+        d1, p1 = self.down1(x)
+        d2, p2 = self.down2(p1)
+        d3, p3 = self.down3(p2)
+        d4, p4 = self.down4(p3)
+
+        b = self.bottleneck(p4)
+
+        u1 = self.up1(b, d4)
+        u2 = self.up2(u1, d3)
+        u3 = self.up3(u2, d2)
+        u4 = self.up4(u3, d1)
+
+        return self.out(u4)
+
+
+# === Hauptfunktion ===
+def main():
+    global click_point
+
+    # Modell laden
+    model = UNet(in_channels=4, num_classes=1).to(device)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
+    print("[INFO] Modell geladen.")
+
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    cv2.namedWindow("Kamera")
+    cv2.setMouseCallback("Kamera", mouse_callback)
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if click_point is not None:
+            input_tensor = create_input_tensor(frame, click_point[0], click_point[1]).unsqueeze(0).to(device)
+            with torch.no_grad():
+                pred_mask = model(input_tensor)
+            overlay_prediction(frame, input_tensor.squeeze(0), pred_mask.squeeze(0))
+        else:
+            cv2.imshow("Kamera", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
