@@ -13,11 +13,34 @@ click_point = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_PATH = "C:/data/python/CineTrack_Extras/Models/unet_model_03.pth"
 
+CROP_WIDTH = 400
+CROP_HEIGHT = 400
+
+
 # Model laden (einmalig)
 model = UNet(in_channels=4, num_classes=1).to(device)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.eval()
 print("Modell geladen.")
+def crop_around_center(frame, center, width, height):
+    """
+    Schneidet ein Rechteck der Größe (width, height) um das gegebene Zentrum aus dem Bild aus.
+    Achtet darauf, dass die Grenzen nicht überschritten werden.
+    """
+    h, w = frame.shape[:2]
+    cx, cy = center
+
+    x1 = max(cx - width // 2, 0)
+    y1 = max(cy - height // 2, 0)
+    x2 = min(x1 + width, w)
+    y2 = min(y1 + height, h)
+
+    # Anpassung, falls wir am Rand schneiden
+    x1 = max(x2 - width, 0)
+    y1 = max(y2 - height, 0)
+
+    return frame[y1:y2, x1:x2]
+
 
 def create_input_tensor(frame, x, y):
     """
@@ -40,23 +63,25 @@ def create_input_tensor(frame, x, y):
 
 def overlay_prediction(frame, input_tensor, pred_mask):
     pred_mask = torch.sigmoid(pred_mask).cpu().numpy()
-    
-    # Sicherstellen, dass pred_mask 2D ist (z.B. (H,W))
+
     if pred_mask.ndim == 3:
-        pred_mask = pred_mask.squeeze(0)  # oder passende Achse
-    
+        pred_mask = pred_mask.squeeze(0)
+
     pred_mask_bin = (pred_mask > 0.3).astype(np.uint8) * 255
 
     mask_color = np.zeros_like(frame)
     mask_color[:, :, 1] = pred_mask_bin  # Grün
 
     overlay = cv2.addWeighted(frame, 0.7, mask_color, 0.3, 0)
-    cv2.imshow("Kamera", overlay)
 
     center, bbox = find_mask_center(pred_mask, frame, threshold=0.3)
 
     if center:
         print(f"Mittelpunkt der Maske: {center}")
+        cropped = crop_around_center(overlay, center, CROP_WIDTH, CROP_HEIGHT)
+        cv2.imshow("Kamera", cropped)
+    else:
+        cv2.imshow("Kamera", overlay)
 
 
 def mouse_callback(event, x, y, flags, param):
