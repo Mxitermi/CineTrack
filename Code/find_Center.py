@@ -28,5 +28,3 @@ def find_center(image_path):
     
 
 rect, center = find_center(f'../Samples/Masks/{input("Enter the image name: ")}')
-# Vorschau anzeigen
-
